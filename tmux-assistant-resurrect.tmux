@@ -50,15 +50,32 @@ install_claude_hooks() {
         return
     fi
 
-    # Install SessionStart hook if not present.
-    # Use contains() for matching — tolerates quoting changes across versions
-    # (e.g., upgrading from unquoted to quoted paths won't create duplicates).
-    if ! jq -e '.hooks.SessionStart[]?.hooks[]? | select((.command // "") | contains("claude-session-track"))' "$settings" >/dev/null 2>&1; then
+    # Install SessionStart hook, refreshing a stale path if one exists.
+    #
+    # The earlier check matched on the substring "claude-session-track" and
+    # skipped install if any hook contained it. That left STALE paths in
+    # place across reinstalls — e.g. on Nix/NixOS, where each rebuild can
+    # produce a new /nix/store hash for the plugin and the previous
+    # derivation gets garbage-collected. Claude Code then ran a hook
+    # pointing at a path that no longer existed and emitted
+    # "SessionStart:clear hook error / bash: <gone-path>: No such file".
+    #
+    # New idempotency: skip only when the EXACT current command (path-
+    # matched) is already installed. Otherwise filter out any prior
+    # instance of this hook (any path) and add the current one. Each
+    # tmux start now self-heals stale entries left by a previous install.
+    if ! jq -e --arg cmd "$track_cmd" '.hooks.SessionStart[]?.hooks[]? | select((.command // "") == $cmd)' "$settings" >/dev/null 2>&1; then
         local tmp
         tmp=$(mktemp)
         jq --arg cmd "$track_cmd" '
             .hooks //= {} |
             .hooks.SessionStart //= [] |
+            # Drop any prior instance of this hook (different paths included).
+            .hooks.SessionStart |= map(
+                .hooks |= map(select((.command // "") | contains("claude-session-track") | not))
+            ) |
+            # Drop entries whose hooks list became empty after the filter.
+            .hooks.SessionStart |= map(select((.hooks // []) | length > 0)) |
             .hooks.SessionStart += [{
                 "matcher": "",
                 "hooks": [{"type": "command", "command": $cmd}]
@@ -66,13 +83,17 @@ install_claude_hooks() {
         ' "$settings" > "$tmp" && mv "$tmp" "$settings"
     fi
 
-    # Install SessionEnd hook if not present
-    if ! jq -e '.hooks.SessionEnd[]?.hooks[]? | select((.command // "") | contains("claude-session-cleanup"))' "$settings" >/dev/null 2>&1; then
+    # Install SessionEnd hook (same self-healing pattern as SessionStart).
+    if ! jq -e --arg cmd "$cleanup_cmd" '.hooks.SessionEnd[]?.hooks[]? | select((.command // "") == $cmd)' "$settings" >/dev/null 2>&1; then
         local tmp
         tmp=$(mktemp)
         jq --arg cmd "$cleanup_cmd" '
             .hooks //= {} |
             .hooks.SessionEnd //= [] |
+            .hooks.SessionEnd |= map(
+                .hooks |= map(select((.command // "") | contains("claude-session-cleanup") | not))
+            ) |
+            .hooks.SessionEnd |= map(select((.hooks // []) | length > 0)) |
             .hooks.SessionEnd += [{
                 "matcher": "",
                 "hooks": [{"type": "command", "command": $cmd}]
