@@ -2557,6 +2557,112 @@ assert_contains "Empty cli_args: tool identified" "$empty_log" "restoring openco
 
 kill_pane_children test-restore-empty true
 
+# --- Test 10d2: Restore adds --model from sidecar model field ---
+#
+# When model is set in the sidecar JSON but NOT in cli_args (e.g., model
+# was set via config/env, not --model flag), restore should add --model.
+
+echo ""
+echo "=== Test 10d2: restore adds --model from sidecar field ==="
+echo ""
+
+tmux new-session -d -s test-restore-model -c /tmp 2>/dev/null || true
+sleep 0.5
+
+cat >"$HOME/.tmux/resurrect/assistant-sessions.json" <<'RMODEL'
+{
+  "timestamp": "2026-01-01T00:00:00Z",
+  "sessions": [
+    {
+      "pane": "test-restore-model:0.0",
+      "tool": "claude",
+      "session_id": "ses_model_field",
+      "cwd": "/tmp",
+      "pid": "99999",
+      "model": "claude-opus-4-5-20250514",
+      "cli_args": "",
+      "env": {}
+    }
+  ]
+}
+RMODEL
+
+>"$RESTORE_LOG"
+just restore 2>&1
+sleep 5
+
+model_log=$(cat "$RESTORE_LOG")
+assert_contains "Model field: --model added to resume" "$model_log" "--model"
+assert_contains "Model field: correct model value" "$model_log" "claude-opus-4-5-20250514"
+
+# Verify --model is NOT duplicated when already in cli_args
+tmux kill-session -t test-restore-model 2>/dev/null || true
+tmux new-session -d -s test-restore-model -c /tmp 2>/dev/null || true
+sleep 0.5
+
+cat >"$HOME/.tmux/resurrect/assistant-sessions.json" <<'RMODELDUP'
+{
+  "timestamp": "2026-01-01T00:00:00Z",
+  "sessions": [
+    {
+      "pane": "test-restore-model:0.0",
+      "tool": "claude",
+      "session_id": "ses_model_nodup",
+      "cwd": "/tmp",
+      "pid": "99999",
+      "model": "claude-opus-4-5-20250514",
+      "cli_args": "--model claude-opus-4-5-20250514",
+      "env": {}
+    }
+  ]
+}
+RMODELDUP
+
+>"$RESTORE_LOG"
+just restore 2>&1
+sleep 5
+
+nodup_log=$(cat "$RESTORE_LOG")
+# Count occurrences of --model — should be exactly 1 (from cli_args, not doubled)
+nodup_count=$(echo "$nodup_log" | grep -o '\-\-model' | wc -l | tr -d ' ')
+assert_eq "Model field: no duplicate --model when already in cli_args" "1" "$nodup_count"
+
+# Verify model is NOT added for non-Claude tools
+tmux kill-session -t test-restore-model 2>/dev/null || true
+tmux new-session -d -s test-restore-model -c /tmp 2>/dev/null || true
+sleep 0.5
+
+cat >"$HOME/.tmux/resurrect/assistant-sessions.json" <<'RMODELOC'
+{
+  "timestamp": "2026-01-01T00:00:00Z",
+  "sessions": [
+    {
+      "pane": "test-restore-model:0.0",
+      "tool": "opencode",
+      "session_id": "ses_model_oc",
+      "cwd": "/tmp",
+      "pid": "99999",
+      "model": "some-model",
+      "cli_args": "",
+      "env": {}
+    }
+  ]
+}
+RMODELOC
+
+>"$RESTORE_LOG"
+just restore 2>&1
+sleep 5
+
+oc_model_log=$(cat "$RESTORE_LOG")
+if echo "$oc_model_log" | grep -q '\-\-model'; then
+	fail "Model field: --model should NOT be added for opencode"
+else
+	pass "Model field: --model correctly skipped for opencode"
+fi
+
+kill_pane_children test-restore-model true
+
 # --- Test 10e: Restore filters out tmux_pane and shell from env prefix ---
 
 echo ""

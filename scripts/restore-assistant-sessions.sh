@@ -58,6 +58,7 @@ while read -r entry; do
 	session_id=$(echo "$entry" | jq -r '.session_id')
 	cwd=$(echo "$entry" | jq -r '.cwd')
 	cli_args=$(echo "$entry" | jq -r '.cli_args // empty')
+	model=$(echo "$entry" | jq -r '.model // empty')
 	env_json=$(echo "$entry" | jq -c '.env // {}')
 
 	# Check if the target pane's session exists
@@ -158,11 +159,21 @@ while read -r entry; do
 		set +f
 	fi
 
+	# Add --model from the sidecar model field if not already in cli_args.
+	# Only for Claude — OpenCode and Codex don't support --model.
+	safe_model_arg=""
+	if [ -n "$model" ] && [ "$tool" = "claude" ]; then
+		case "$cli_args" in
+		*--model*) ;;
+		*) safe_model_arg=" --model $(posix_quote "$model")" ;;
+		esac
+	fi
+
 	resume_cmd=""
 	case "$tool" in
 	claude)
-		if [ -n "$safe_cli_args" ]; then
-			resume_cmd="command claude${safe_cli_args} --resume ${safe_sid}"
+		if [ -n "$safe_cli_args" ] || [ -n "$safe_model_arg" ]; then
+			resume_cmd="command claude${safe_cli_args}${safe_model_arg} --resume ${safe_sid}"
 		else
 			resume_cmd="command claude --resume ${safe_sid}"
 		fi
