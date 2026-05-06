@@ -46,74 +46,24 @@ install-plugins:
 install-hooks: install-claude-hook install-opencode-plugin
     @echo "All assistant hooks installed"
 
-# Install Claude Code hooks (SessionStart + SessionEnd) into ~/.claude/settings.json
+# Install Claude Code hooks and OpenCode plugin via the TPM entry point.
+# Delegates to tmux-assistant-resurrect.tmux (single source of truth).
 install-claude-hook:
     #!/usr/bin/env bash
     set -euo pipefail
-    settings="$HOME/.claude/settings.json"
-    track_cmd="bash '{{repo_dir}}/hooks/claude-session-track.sh'"
-    cleanup_cmd="bash '{{repo_dir}}/hooks/claude-session-cleanup.sh'"
-
-    if [ ! -f "$settings" ]; then
-        mkdir -p "$(dirname "$settings")"
-        echo '{}' > "$settings"
+    started_server=false
+    if ! tmux list-sessions &>/dev/null; then
+        tmux new-session -d -s __install_hooks_tmp
+        started_server=true
+    fi
+    bash "{{repo_dir}}/tmux-assistant-resurrect.tmux"
+    if [ "$started_server" = true ]; then
+        tmux kill-session -t __install_hooks_tmp 2>/dev/null || true
     fi
 
-    # Install SessionStart hook (session tracking)
-    if jq -e '.hooks.SessionStart[]?.hooks[]? | select((.command // "") | contains("claude-session-track"))' "$settings" >/dev/null 2>&1; then
-        echo "Claude SessionStart hook already configured"
-    else
-        tmp=$(mktemp)
-        jq --arg cmd "$track_cmd" '
-            .hooks //= {} |
-            .hooks.SessionStart //= [] |
-            .hooks.SessionStart += [{
-                "matcher": "",
-                "hooks": [{
-                    "type": "command",
-                    "command": $cmd
-                }]
-            }]
-        ' "$settings" > "$tmp" && mv "$tmp" "$settings"
-        echo "Claude SessionStart hook installed in $settings"
-    fi
-
-    # Install SessionEnd hook (state file cleanup)
-    if jq -e '.hooks.SessionEnd[]?.hooks[]? | select((.command // "") | contains("claude-session-cleanup"))' "$settings" >/dev/null 2>&1; then
-        echo "Claude SessionEnd hook already configured"
-    else
-        tmp=$(mktemp)
-        jq --arg cmd "$cleanup_cmd" '
-            .hooks //= {} |
-            .hooks.SessionEnd //= [] |
-            .hooks.SessionEnd += [{
-                "matcher": "",
-                "hooks": [{
-                    "type": "command",
-                    "command": $cmd
-                }]
-            }]
-        ' "$settings" > "$tmp" && mv "$tmp" "$settings"
-        echo "Claude SessionEnd hook installed in $settings"
-    fi
-
-# Install OpenCode session-tracker plugin
+# Install OpenCode session-tracker plugin (delegates to .tmux entry point above)
 install-opencode-plugin:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    plugin_dir="$HOME/.config/opencode/plugins"
-    plugin_file="$plugin_dir/session-tracker.js"
-    source_file="{{repo_dir}}/hooks/opencode-session-track.js"
-
-    mkdir -p "$plugin_dir"
-
-    if [ -L "$plugin_file" ] && [ "$(readlink "$plugin_file")" = "$source_file" ]; then
-        echo "OpenCode session-tracker plugin already linked"
-        exit 0
-    fi
-
-    ln -sf "$source_file" "$plugin_file"
-    echo "OpenCode session-tracker plugin linked at $plugin_file"
+    @echo "OpenCode plugin installed via install-claude-hook (shared entry point)"
 
 # Add resurrect config to ~/.tmux.conf
 configure-tmux:
