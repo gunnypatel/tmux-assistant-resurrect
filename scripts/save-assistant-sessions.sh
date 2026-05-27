@@ -378,13 +378,11 @@ _strip_bool_opt() {
 # Strip known subcommands from args (e.g. "resume <id>" or "fork <id>").
 # Usage: _strip_subcmds "args" subcmd1 subcmd2 ...
 #
-# Scans args left-to-right, skipping dash-prefixed tokens. Each non-dash
-# token is checked against the list of known subcommands. If it matches,
-# the token and an optional following positional value (non-dash) are
-# removed and scanning continues (to handle args that may have multiple
-# subcommand-like tokens). If a non-dash token does NOT match any known
-# subcommand, it is left in place and scanning stops — it belongs to the
-# tool's own positional arguments.
+# Scans all args left-to-right. Each non-dash token is checked against the
+# list of known subcommands. If it matches, the token and an optional
+# following positional value (non-dash) are removed. Non-matching bare
+# tokens (e.g. option values like "o3" in `--model o3 resume`) are
+# skipped — scanning continues past them to find the actual subcommand.
 _strip_subcmds() {
 	local -a words=($1)
 	shift
@@ -409,7 +407,6 @@ _strip_subcmds() {
 					break
 				fi
 			done
-			[ "$matched" = "0" ] && break
 			i=$((i + 1))
 			;;
 		esac

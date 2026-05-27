@@ -2369,6 +2369,10 @@ assert_eq "Codex fork --last" "--full-auto" \
 assert_eq "Codex resume --all --include-non-interactive" "" \
 	"$(extract_cli_args "codex" "codex resume --all --include-non-interactive")"
 
+# Codex: --model o3 resume (option value before subcommand)
+assert_eq "Codex --model o3 resume" "--model o3" \
+	"$(extract_cli_args "codex" "codex --model o3 resume ses_abc")"
+
 # Known limitation: if an option value equals a subcommand name (e.g.
 # `codex --profile fork`), the value is incorrectly stripped because we
 # cannot distinguish option values from subcommands without a full option
