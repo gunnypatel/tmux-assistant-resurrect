@@ -357,6 +357,67 @@ register_codex_session_id() {
 	esac
 }
 
+# --- CLI args extraction helpers ---
+
+# Strip a long option: --flag, --flag=val, or --flag val.
+# Value (if space-separated) must not start with "-" to avoid consuming next flag.
+_strip_long_opt() {
+	echo "$2" | sed -E "s/$1(=[^ ]*| +[^- ][^ ]*)?//g"
+}
+
+# Strip a short option: -X or -X val.
+_strip_short_opt() {
+	echo "$2" | sed -E "s/(^| )$1( +[^- ][^ ]*)?( |$)/ /g"
+}
+
+# Strip a positional subcommand + optional value: cmd [val]
+_strip_subcmd() {
+	echo "$2" | sed -E "s/(^| )$1( +[^- ][^ ]*)?( |$)/ /g"
+}
+
+# Discover session-identity flags from a tool's --help output.
+# Matches long option names against a keyword pattern and emits lines of
+# "long [short]" pairs (e.g. "--resume -r" or "--fork-session").
+# Cached per tool in _SESSION_FLAGS_<tool> to avoid repeated --help calls.
+_discover_session_flags() {
+	local tool="$1" pattern="$2"
+	local cache_var="_SESSION_FLAGS_${tool}"
+	local cached="${!cache_var:-}"
+	if [ -n "$cached" ]; then
+		echo "$cached"
+		return
+	fi
+
+	local help_out result=""
+	help_out=$("$tool" --help 2>/dev/null) || true
+	if [ -z "$help_out" ]; then
+		printf -v "$cache_var" '%s' "-"
+		return
+	fi
+
+	local line long short
+	while IFS= read -r line; do
+		long=$(echo "$line" | grep -oE -- '--[a-z][-a-z]*' | head -1) || continue
+		echo "$long" | grep -qE "$pattern" || continue
+		short=$(echo "$line" | grep -oE '^\s*-[a-zA-Z]' | tr -d ' ' || true)
+		result="${result}${long}${short:+ ${short}}
+"
+	done <<< "$(echo "$help_out" | grep -E '^\s+(-[a-zA-Z],\s+)?--')"
+
+	result=$(echo "$result" | sort -u | sed '/^$/d')
+	printf -v "$cache_var" '%s' "${result:--}"
+	echo "$result"
+}
+
+# Session-identity flag name patterns per tool.
+# Matched against long option names from --help. Flag names are semantic
+# (--resume always means resume), so new flags like --resume-from are
+# auto-discovered without script changes.
+SESSION_FLAG_PATTERN_claude='^--(resume|continue|session-id|fork-session|from-pr)$'
+SESSION_FLAG_PATTERN_opencode='^--session$'
+# codex uses subcommands (resume, fork), not --flags — handled separately.
+SESSION_SUBCMD_PATTERN_codex='resume|fork'
+
 # --- CLI args extraction ---
 
 # Extract CLI args from a process's full command line, stripping the binary
@@ -365,10 +426,9 @@ register_codex_session_id() {
 # Usage: extract_cli_args <tool> <full_args_from_ps>
 # Returns: the remaining flags/args as a single whitespace-normalized string.
 #
-# Per-tool stripping:
-#   claude:   --resume <id>, --resume=<id>
-#   opencode: -s <id>, --session <id>, --session=<id>
-#   codex:    resume <id> (positional subcommand)
+# Session-identity flags are discovered dynamically from <tool> --help,
+# matched by name pattern. This keeps stripping in sync with the installed
+# tool version without manual flag list maintenance.
 extract_cli_args() {
 	local tool="$1" raw_args="$2"
 
@@ -391,23 +451,36 @@ extract_cli_args() {
 		;;
 	esac
 
-	# Strip tool-specific session/resume args.
-	# Patterns use [= ] *  to handle both --flag=val and --flag val forms,
-	# and to tolerate multiple spaces between flag and value.
-	case "$tool" in
-	claude)
-		# --resume <id> or --resume=<id>
-		args=$(echo "$args" | sed -E 's/--resume[= ] *[^ ]*//')
-		;;
-	opencode)
-		# -s <id>, --session <id>, --session=<id>
-		args=$(echo "$args" | sed -E 's/--session[= ] *[^ ]*//; s/-s  *[^ ]*//')
-		;;
-	codex)
-		# resume <id> (positional)
-		args=$(echo "$args" | sed -E 's/resume  *[^ ]*//')
-		;;
-	esac
+	# Strip tool-specific session/resume flags.
+	local pattern_var="SESSION_FLAG_PATTERN_${tool}"
+	local pattern="${!pattern_var:-}"
+	local subcmd_var="SESSION_SUBCMD_PATTERN_${tool}"
+	local subcmd_pattern="${!subcmd_var:-}"
+
+	if [ -n "$pattern" ]; then
+		local flags line long short
+		flags=$(_discover_session_flags "$tool" "$pattern")
+		if [ "$flags" != "-" ] && [ -n "$flags" ]; then
+			while IFS= read -r line; do
+				long="${line%% *}"
+				short="${line#"$long"}"
+				short="${short# }"
+				args=$(_strip_long_opt "$long" "$args")
+				[ -n "$short" ] && args=$(_strip_short_opt "$short" "$args")
+			done <<< "$flags"
+		fi
+	fi
+
+	if [ -n "$subcmd_pattern" ]; then
+		local subcmd
+		local help_out
+		help_out=$("$tool" --help 2>/dev/null) || true
+		for subcmd in $(echo "$subcmd_pattern" | tr '|' ' '); do
+			if [ -n "$help_out" ] && echo "$help_out" | grep -qw "$subcmd"; then
+				args=$(_strip_subcmd "$subcmd" "$args")
+			fi
+		done
+	fi
 
 	# Normalize whitespace: collapse multiple spaces, trim leading/trailing
 	echo "$args" | sed -E 's/  +/ /g; s/^ //; s/ $//'

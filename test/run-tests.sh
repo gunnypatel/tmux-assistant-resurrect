@@ -2267,6 +2267,139 @@ assert_eq "Node.js double-binary no flags" "" \
 assert_eq "Node.js double-binary bare" "" \
 	"$(extract_cli_args "codex" "codex /usr/local/bin/codex")"
 
+# --- Bare flag / greedy-consumption fixes ---
+
+# Claude: bare --resume at end-of-args (no value)
+assert_eq "Claude bare --resume" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions --resume")"
+
+# Claude: --resume followed by another flag (must not consume it)
+assert_eq "Claude --resume before flag" "--model claude-opus-4-7" \
+	"$(extract_cli_args "claude" "claude --resume --model claude-opus-4-7")"
+
+# Claude: bare -r (short form of --resume)
+assert_eq "Claude bare -r" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions -r")"
+
+# Claude: -r <id>
+assert_eq "Claude -r with value" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions -r ses_abc")"
+
+# Claude: --continue stripped
+assert_eq "Claude strip --continue" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions --continue")"
+
+# Claude: -c stripped
+assert_eq "Claude strip -c" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions -c")"
+
+# Claude: --session-id <uuid>
+assert_eq "Claude strip --session-id" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions --session-id 550e8400-e29b-41d4-a716-446655440000")"
+
+# Claude: --session-id=<uuid>
+assert_eq "Claude strip --session-id= (equals)" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions --session-id=550e8400-e29b-41d4-a716-446655440000")"
+
+# Claude: bare --session-id (no value)
+assert_eq "Claude bare --session-id" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions --session-id")"
+
+# Claude: --from-pr <value>
+assert_eq "Claude strip --from-pr" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions --from-pr 42")"
+
+# Claude: bare --from-pr (interactive picker)
+assert_eq "Claude bare --from-pr" "--dangerously-skip-permissions" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions --from-pr")"
+
+# Claude: --fork-session (boolean, no value)
+assert_eq "Claude strip --fork-session" "--dangerously-skip-permissions --model opus" \
+	"$(extract_cli_args "claude" "claude --dangerously-skip-permissions --fork-session --model opus")"
+
+# Claude: multiple session flags combined
+assert_eq "Claude multiple session flags" "--model opus" \
+	"$(extract_cli_args "claude" "claude --continue --fork-session --model opus --resume ses_abc")"
+
+# Claude: legit flags preserved
+assert_eq "Claude preserve --add-dir" "--add-dir /a --add-dir /b" \
+	"$(extract_cli_args "claude" "claude --add-dir /a --add-dir /b")"
+
+# OpenCode: bare --session
+assert_eq "OpenCode bare --session" "--verbose" \
+	"$(extract_cli_args "opencode" "opencode --verbose --session")"
+
+# OpenCode: --session before flag (greedy fix)
+assert_eq "OpenCode --session before flag" "--verbose" \
+	"$(extract_cli_args "opencode" "opencode --session --verbose")"
+
+# OpenCode: bare -s
+assert_eq "OpenCode bare -s" "--verbose" \
+	"$(extract_cli_args "opencode" "opencode --verbose -s")"
+
+# OpenCode: -s before flag (greedy fix)
+assert_eq "OpenCode -s before flag" "--verbose" \
+	"$(extract_cli_args "opencode" "opencode -s --verbose")"
+
+# Codex: bare resume (no id)
+assert_eq "Codex bare resume" "" \
+	"$(extract_cli_args "codex" "codex resume")"
+
+# Codex: resume before flag (greedy fix)
+assert_eq "Codex resume before flag" "--model o3" \
+	"$(extract_cli_args "codex" "codex resume --model o3")"
+
+# Codex: fork <id>
+assert_eq "Codex strip fork" "--full-auto" \
+	"$(extract_cli_args "codex" "codex --full-auto fork ses_abc")"
+
+# Codex: bare fork
+assert_eq "Codex bare fork" "--full-auto" \
+	"$(extract_cli_args "codex" "codex --full-auto fork")"
+
+# --- Test 9c: dynamic discovery sanity check ---
+# Verifies _discover_session_flags actually finds flags from --help.
+# Catches regressions in the help-parsing logic itself.
+
+echo ""
+echo "=== Test 9c: dynamic discovery sanity check ==="
+echo ""
+
+suite "cli_args_discovery"
+
+# Claude: discovery must find --resume (always present)
+_CLAUDE_DISCOVERED=$(_discover_session_flags claude "$SESSION_FLAG_PATTERN_claude")
+if echo "$_CLAUDE_DISCOVERED" | grep -q -- '--resume'; then
+	pass "Claude discovery finds --resume"
+else
+	fail "Claude discovery missed --resume (got: $(echo "$_CLAUDE_DISCOVERED" | tr '\n' ' '))"
+fi
+
+# Claude: discovery must find --continue
+if echo "$_CLAUDE_DISCOVERED" | grep -q -- '--continue'; then
+	pass "Claude discovery finds --continue"
+else
+	fail "Claude discovery missed --continue"
+fi
+
+# OpenCode: discovery must find --session
+_OPENCODE_DISCOVERED=$(_discover_session_flags opencode "$SESSION_FLAG_PATTERN_opencode")
+if echo "$_OPENCODE_DISCOVERED" | grep -q -- '--session'; then
+	pass "OpenCode discovery finds --session"
+else
+	fail "OpenCode discovery missed --session"
+fi
+
+# Codex: resume/fork subcommands must appear in --help
+CODEX_HELP=$(codex --help 2>&1)
+for subcmd in resume fork; do
+	if echo "$CODEX_HELP" | grep -qw "$subcmd"; then
+		pass "Codex '$subcmd' subcommand present"
+	else
+		fail "Codex '$subcmd' subcommand missing from --help"
+	fi
+done
+
 # --- Test 9b: enriched fields in assistant-sessions.json ---
 
 echo ""
