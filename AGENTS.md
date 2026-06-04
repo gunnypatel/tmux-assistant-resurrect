@@ -71,7 +71,8 @@ process args as a reliable fallback.
 - The `env` object in state files captures `TMUX_PANE` and `SHELL` by default,
   plus user-configured vars via `@assistant-resurrect-capture-env` tmux option
   (space-separated list, set in tmux.conf)
-- Log files go to `~/.tmux/resurrect/assistant-{save,restore}.log` (truncated to 500 lines per run)
+- Log files go to `assistant-{save,restore}.log` in tmux-resurrect's save dir
+  (resolved by `resurrect_data_dir` in `lib-detect.sh`; truncated to 500 lines per run)
 - Process inspection uses `ps -eo pid=,ppid=` (not `pgrep -P` -- unreliable on macOS)
 - Agent detection matches binary names via `case` patterns in `detect_tool()`
 - Hook install uses two-phase matching: **exact equality** (`== $cmd`) to detect
@@ -141,9 +142,9 @@ just test
 just save                          # trigger a save manually
 just status                        # check installation status
 just clean                         # remove stale state files
-cat ~/.tmux/resurrect/assistant-sessions.json | jq .
-cat ~/.tmux/resurrect/assistant-save.log
-cat ~/.tmux/resurrect/assistant-restore.log
+cat ~/.local/share/tmux/resurrect/assistant-sessions.json | jq .   # XDG default; see resurrect_data_dir
+cat ~/.local/share/tmux/resurrect/assistant-save.log
+cat ~/.local/share/tmux/resurrect/assistant-restore.log
 ```
 
 ### Test infrastructure notes

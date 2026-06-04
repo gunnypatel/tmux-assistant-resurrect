@@ -16,6 +16,12 @@ ERRORS=""
 export TMUX_ASSISTANT_RESURRECT_DIR="/tmp/tmux-assistant-resurrect-test"
 TEST_STATE_DIR="$TMUX_ASSISTANT_RESURRECT_DIR"
 
+# Pin tmux-resurrect's save dir too, so resurrect_data_dir() resolves to a known
+# location for the integration assertions below (which read $HOME/.tmux/resurrect).
+# The resolution logic itself is covered by the resurrect_dir unit suite (Test 8z).
+export TMUX_RESURRECT_DIR="$HOME/.tmux/resurrect"
+mkdir -p "$TMUX_RESURRECT_DIR"
+
 # --- JUnit XML tracking ---
 
 CURRENT_SUITE=""
@@ -2193,6 +2199,57 @@ assert_eq "Strip leaves archive untouched when no assistant sessions" "$archive_
 rm -rf "$strip_verify" "$STRIP_STATE_DIR" "$RESURRECT_DIR"
 
 # Restore variables for any subsequent tests
+RESURRECT_DIR="${HOME}/.tmux/resurrect"
+STATE_DIR="$TEST_STATE_DIR"
+
+# --- Test 8z: resurrect_data_dir() unit tests ---
+# Each branch runs the resolver in a subshell so HOME/XDG/override overrides and
+# the tmux() stub stay scoped and don't leak into later suites.
+
+suite "resurrect_dir"
+echo ""
+echo "=== Test 8z: resurrect_data_dir() unit tests ==="
+echo ""
+
+source "$REPO_DIR/scripts/lib-detect.sh"
+
+# 1. Explicit $TMUX_RESURRECT_DIR override takes precedence over everything.
+rdir_out=$(TMUX_RESURRECT_DIR="/tmp/explicit-override" resurrect_data_dir)
+assert_eq "resurrect_dir: \$TMUX_RESURRECT_DIR override wins" \
+	"/tmp/explicit-override" "$rdir_out"
+
+# 2. No override, no @resurrect-dir, ~/.tmux/resurrect EXISTS -> legacy default.
+rdir_legacy=$(mktemp -d)
+mkdir -p "$rdir_legacy/.tmux/resurrect"
+rdir_out=$(unset TMUX_RESURRECT_DIR; HOME="$rdir_legacy" resurrect_data_dir)
+assert_eq "resurrect_dir: legacy ~/.tmux/resurrect when present" \
+	"$rdir_legacy/.tmux/resurrect" "$rdir_out"
+rm -rf "$rdir_legacy"
+
+# 3. No override, legacy dir absent, XDG_DATA_HOME set -> XDG path.
+rdir_xdg=$(mktemp -d)
+rdir_out=$(unset TMUX_RESURRECT_DIR; HOME="$rdir_xdg" XDG_DATA_HOME="$rdir_xdg/xdg" resurrect_data_dir)
+assert_eq "resurrect_dir: XDG path when set and legacy dir absent" \
+	"$rdir_xdg/xdg/tmux/resurrect" "$rdir_out"
+rm -rf "$rdir_xdg"
+
+# 4. No override, legacy dir absent, no XDG_DATA_HOME -> ~/.local/share default.
+rdir_def=$(mktemp -d)
+rdir_out=$(unset TMUX_RESURRECT_DIR XDG_DATA_HOME; HOME="$rdir_def" resurrect_data_dir)
+assert_eq "resurrect_dir: ~/.local/share default when no XDG" \
+	"$rdir_def/.local/share/tmux/resurrect" "$rdir_out"
+rm -rf "$rdir_def"
+
+# 5. @resurrect-dir option wins over the defaults, with $HOME expanded
+#    (parity with tmux-resurrect's own resurrect_dir()). tmux() is stubbed to
+#    emit a literal '$HOME/...' as if the user set @resurrect-dir to it.
+rdir_opt=$(mktemp -d)
+rdir_out=$(unset TMUX_RESURRECT_DIR; HOME="$rdir_opt"; tmux() { echo '$HOME/opt-res'; }; resurrect_data_dir)
+assert_eq "resurrect_dir: @resurrect-dir option expands \$HOME" \
+	"$rdir_opt/opt-res" "$rdir_out"
+rm -rf "$rdir_opt"
+
+# Restore variables for subsequent tests
 RESURRECT_DIR="${HOME}/.tmux/resurrect"
 STATE_DIR="$TEST_STATE_DIR"
 

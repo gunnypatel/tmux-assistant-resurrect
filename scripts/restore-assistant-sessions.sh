@@ -12,7 +12,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib-detect.sh
 source "$SCRIPT_DIR/lib-detect.sh"
 
-RESURRECT_DIR="${HOME}/.tmux/resurrect"
+# Follow tmux-resurrect's own save-dir resolution (resurrect_data_dir in
+# lib-detect.sh) so we read the sidecar from wherever resurrect saved it.
+RESURRECT_DIR="$(resurrect_data_dir)"
 INPUT_FILE="${RESURRECT_DIR}/assistant-sessions.json"
 LOG_FILE="${RESURRECT_DIR}/assistant-restore.log"
 

@@ -5,6 +5,7 @@
 # Provides:
 #   detect_tool <args>           — returns tool name or empty string
 #   pane_has_assistant <pane_pid> [ps_snapshot] — returns 0 + prints PID if found
+#   resurrect_data_dir           — prints tmux-resurrect's save directory
 
 # --- detect_tool ---
 # Match binary name with optional path prefix, standalone or with arguments.
@@ -90,4 +91,46 @@ posix_quote() {
 	# Replace each ' with '"'"'
 	val="${val//\'/\'\"\'\"\'}"
 	printf "'%s'" "$val"
+}
+
+# --- resurrect_data_dir ---
+# Print the directory tmux-resurrect saves into, resolved the SAME way resurrect
+# resolves it itself (scripts/helpers.sh:resurrect_dir). Our sidecar files
+# (assistant-sessions.json, *.log) and the pane_contents.tar.gz we rewrite must
+# live next to resurrect's own saves, so this has to track resurrect's logic
+# rather than assume a fixed location.
+#
+# Resolution order:
+#   1. $TMUX_RESURRECT_DIR        — explicit override (tests / unusual setups)
+#   2. @resurrect-dir tmux option — when the user set one
+#   3. ~/.tmux/resurrect          — when that directory already exists (legacy default)
+#   4. ${XDG_DATA_HOME:-~/.local/share}/tmux/resurrect — modern (XDG) default
+#
+# Why this matters — do NOT hardcode ~/.tmux/resurrect: on an XDG install that
+# directory does not exist, so resurrect saves under ~/.local/share. Writing our
+# files to ~/.tmux/resurrect anyway would not only split them away from
+# resurrect's real saves, it would `mkdir` that directory — and resurrect's own
+# dir-exists check (step 3) would then flip the user's save location to it on the
+# next run, silently migrating their data and orphaning prior saves.
+#
+# Mirrors resurrect's expansion of ~, $HOME and $HOSTNAME inside @resurrect-dir.
+resurrect_data_dir() {
+	if [ -n "${TMUX_RESURRECT_DIR:-}" ]; then
+		echo "$TMUX_RESURRECT_DIR"
+		return
+	fi
+
+	local dir
+	dir=$(tmux show-option -gqv @resurrect-dir 2>/dev/null || true)
+	if [ -z "$dir" ]; then
+		if [ -d "$HOME/.tmux/resurrect" ]; then
+			dir="$HOME/.tmux/resurrect"
+		else
+			dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect"
+		fi
+	fi
+
+	local host
+	host=$(hostname 2>/dev/null || true)
+	echo "$dir" | sed "s,\$HOME,$HOME,g; s,\$HOSTNAME,$host,g; s,~,$HOME,g"
 }

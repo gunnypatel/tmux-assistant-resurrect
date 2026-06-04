@@ -26,7 +26,7 @@ SAVE (every 5 min + manual prefix+Ctrl-s)
     -> post-save hook inspects child processes of each pane
     -> detects assistants by binary name (claude, opencode, codex)
     -> extracts session IDs via native hooks/plugins/process args
-    -> writes ~/.tmux/resurrect/assistant-sessions.json
+    -> writes assistant-sessions.json in tmux-resurrect's save dir
 
 RESTORE (on tmux start or manual prefix+Ctrl-r)
   tmux-resurrect restores pane layouts
@@ -218,13 +218,19 @@ hook writes the session ID to disk automatically).
 
 Press `prefix + Ctrl-s` (the tmux-resurrect save keybinding). This saves the
 tmux layout **and** runs the assistant save hook, which detects running
-assistants and writes their session IDs to
-`~/.tmux/resurrect/assistant-sessions.json`.
+assistants and writes their session IDs to `assistant-sessions.json` inside
+tmux-resurrect's save directory.
+
+> **Save location.** The hook writes next to tmux-resurrect's own saves,
+> resolved exactly as resurrect resolves it: `@resurrect-dir` if you set it,
+> otherwise `~/.tmux/resurrect` when that directory already exists, else the
+> XDG default `${XDG_DATA_HOME:-~/.local/share}/tmux/resurrect`. Set
+> `TMUX_RESURRECT_DIR` to override. Examples below assume the XDG default.
 
 You can inspect what was saved:
 
 ```bash
-cat ~/.tmux/resurrect/assistant-sessions.json | jq .
+cat ~/.local/share/tmux/resurrect/assistant-sessions.json | jq .
 ```
 
 Example output:
@@ -293,7 +299,7 @@ are prepended to the resume command.
 Check the restore log to see what happened:
 
 ```bash
-cat ~/.tmux/resurrect/assistant-restore.log
+cat ~/.local/share/tmux/resurrect/assistant-restore.log
 ```
 
 You should see lines like:
@@ -308,7 +314,7 @@ You should see lines like:
 The save log is also available if you want to see what was detected:
 
 ```bash
-cat ~/.tmux/resurrect/assistant-save.log
+cat ~/.local/share/tmux/resurrect/assistant-save.log
 ```
 
 ### Troubleshooting
@@ -343,8 +349,8 @@ export TMUX_ASSISTANT_RESURRECT_DIR=/path/to/state
 
 Note: state files are transient — they track running assistant PIDs and session
 IDs while tmux is active. The persistent sidecar JSON
-(`~/.tmux/resurrect/assistant-sessions.json`) is what survives reboots and lives
-in your home directory.
+(`assistant-sessions.json`, in tmux-resurrect's save directory — see **Save
+location** above) is what survives reboots.
 
 ### Environment variable capture and restoration
 
@@ -466,7 +472,8 @@ matching binary names. Then extracts session IDs using tool-specific methods
 - **Model** (`model`): from state file (preferred) or `--model` in args (fallback)
 - **Environment** (`env`): from state file (captured by hooks/plugins)
 
-Writes everything to `~/.tmux/resurrect/assistant-sessions.json`.
+Writes everything to `assistant-sessions.json` in tmux-resurrect's save
+directory (see **Save location** above).
 
 ### Restore hook (`scripts/restore-assistant-sessions.sh`)
 
