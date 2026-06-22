@@ -29,6 +29,42 @@ log() {
 	echo "$msg" >>"$LOG_FILE"
 }
 
+# Block until a pane's interactive shell is actually ready to consume keystrokes.
+#
+# Why this exists: on a cold tmux start (continuum auto-restore), send-keys can
+# fire while the pane's shell is still mid-init (oh-my-zsh, compinit, nvm,
+# powerlevel10k instant-prompt, etc.). zsh resets the line editor (ZLE) and tty
+# modes during startup, so keys typed before ZLE is live are silently discarded
+# -- no echo, no error, no command. A fixed sleep can't fix this reliably: it's
+# too short on a busy boot and wastes time on a fast one. Instead we probe the
+# real condition -- type a unique marker and wait until it echoes back, proving
+# the shell is at an interactive prompt and consuming input.
+#
+# The leading space before `echo` keeps the probe out of shell history when
+# HIST_IGNORE_SPACE / HISTCONTROL=ignorespace is set. We clear the pane after a
+# successful probe so the marker lines don't linger above the resumed TUI.
+#
+# Returns 0 once ready, 1 if it times out (caller proceeds anyway -- best effort).
+wait_for_shell_ready() {
+	local pane="$1"
+	local marker="__ar_ready_${$}_$(echo "$pane" | tr -c 'A-Za-z0-9' '_')"
+	local attempt=0
+	# 50 attempts * 0.2s = 10s cap; generous for heavy zsh init, bounded so a
+	# wedged pane never hangs the rest of the restore.
+	while [ "$attempt" -lt 50 ]; do
+		tmux send-keys -t "$pane" " echo $marker" Enter 2>/dev/null || return 1
+		sleep 0.2
+		# Match the *echoed output* of the command, not the typed command line
+		# itself. Require the marker to appear at least twice would be ideal, but
+		# a single hit after Enter already implies the shell ran it.
+		if tmux capture-pane -pt "$pane" 2>/dev/null | grep -q "$marker"; then
+			return 0
+		fi
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
 if [ ! -f "$INPUT_FILE" ]; then
 	log "no saved sessions found at $INPUT_FILE"
 	exit 0
@@ -43,7 +79,9 @@ if [ "$count" -eq 0 ]; then
 	exit 0
 fi
 
-# Wait for panes to be fully initialized after resurrect restore
+# Wait for panes to be fully initialized after resurrect restore.
+# This is a coarse pre-settle only; per-pane shell readiness is guaranteed
+# later by wait_for_shell_ready() before any resume command is sent.
 sleep 2
 
 log "restoring $count assistant session(s)..."
@@ -219,11 +257,19 @@ while read -r entry; do
 
 	log "restoring $tool in $pane (session: $session_id, cmd: $resume_cmd)"
 
+	# Wait until the shell is genuinely ready before sending anything. Without
+	# this, keys can be swallowed mid-init on a cold continuum auto-restore (see
+	# wait_for_shell_ready). On manual Ctrl+r the shell is already idle, so the
+	# probe returns on its first attempt.
+	if ! wait_for_shell_ready "$pane"; then
+		log "pane $pane shell not ready after probe timeout; sending anyway (keys may be dropped)"
+	fi
+
 	# Clear the pane before launching: tmux-resurrect may have restored old
-	# pane contents (captured terminal text from the previous session). Without
-	# clearing, TUI tools like Claude show stale output above the new instance.
-	# Uses tmux clear-history to wipe scrollback, then sends 'clear' to reset
-	# the visible area.
+	# pane contents (captured terminal text from the previous session), plus the
+	# readiness-probe markers. Without clearing, TUI tools like Claude show stale
+	# output above the new instance. Uses tmux clear-history to wipe scrollback,
+	# then sends 'clear' to reset the visible area.
 	tmux send-keys -t "$pane" "clear" Enter
 	tmux clear-history -t "$pane"
 	sleep 0.3
